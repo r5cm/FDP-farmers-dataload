@@ -1,39 +1,46 @@
 
+# Initial inspection of Excel files ---------------------------------------
+
+# - Make sure the sheet that contains data is named 'Template for data load'
+# - Make sure that there are no old files in the 'To be loaded' folder
+# - Do a quick visual inspection of the file
+# - Make sure there are no hidden rows or columns
+# - Make sure that data start in cell A1
+
+
 # Import load to R ---------------------------------------------------------
 
 # Create list with files to load
 setwd("../To be loaded")
 to.load <- list.files(pattern = ".xlsx")
 
-# Import files to load
-library(xlsx)
-for (i in 1:length(to.load)) {
-     file.name <- paste("file", i, sep = "")
-     if (i == 1) {
-          load <- read.xlsx(to.load[i], sheetName = "Template for data load")
-     } else {
-          assign(file.name, read.xlsx(to.load[i], 
-                                      sheetName = "Template for data load"))
-          load <- rbind(load, file.name)
-     } 
-}
-
-# Change variable names by short names
-# Obtain questions coding from Google Drive spreadsheet
+# Import metadata of data to import
 library(googlesheets)
 library(dplyr)
 (my_sheets <- gs_ls())
 template.info <- gs_title("FDP - Data load template")
 questions.coding <- template.info %>% gs_read(ws = "Questions coding", 
-        range = "A1:C57" , colnames =TRUE)
-# Change names for shorter names
-names(load) <- questions.coding$short.name
+                                              range = "A1:D57" , colnames =TRUE)
+
+# Import files to load
+for (i in 1:length(to.load)) {
+     temp.load <- read.xlsx(to.load[i], sheetName = "Template for data load",
+                          colClasses = questions.coding$r.class,
+                          stringsAsFactors = FALSE)
+     names(temp.load) <- questions.coding$short.name
+     temp.load <- temp.load[rowSums(is.na(temp.load)) != ncol(temp.load), ]
+     temp.load <- data.frame(file = rep(to.load[i], nrow(temp.load)), temp.load)
+     ifelse(i == 1, load <- temp.load, load <- rbind(load, temp.load))
+}
 
 
 # Clean data --------------------------------------------------------------
 
 # Check variables class
 sapply(load, class)
+# Check variables summary
+library(Hmisc)
+sapply(load, summary)
 
 # Check that all required variables have information for all observations
 # farmer name
@@ -96,8 +103,9 @@ assigned <- is.na(load$Id)
 ifelse(length(assigned[assigned == FALSE]) == nrow(load),
        "All assigned.to successfully assigned",
        warning("There are assigned.to blank. Please check.", call. = FALSE))
-# Change name to assign.to Id
-names(load)[names(load) == "Id"] <- "assigned.to.id"
+# Change name to assign.to Id and replace assigned.to for this variable
+load <- select(load, farmer.name, Id, farmer.code:renovation.ha)
+names(load)[names(load) == "Id"] <- "assigned.to"
 
 # Check that year variables contain only the year
 date.vars <- c("farmer.birthday", "spouse.bday", "year.relationship.start")
@@ -151,6 +159,49 @@ load$year.relationship.start <- ifelse(load$year.relationship.start == 0, NA,
 
 # Load data to SF ----------------------------------------------------------
 
+# Remove file variables
+select(load, -file)
+
+# Change variable names to API names
+names(load) <- questions.coding$api.name
+
+# Load data to Salesforce
+# Create job
+job_info <- rforcecom.createBulkJob(session, 
+                                    operation='insert', 
+                                    object='FDP_submission__c')
+# Load data
+batches_info <- rforcecom.createBulkBatch(session, 
+                                          jobId=job_info$id, 
+                                          load, 
+                                          multiBatch = TRUE, 
+                                          batchSize = 50)
+
+# Batches status
+batches_status <- lapply(batches_info, 
+                         FUN=function(x){
+                              rforcecom.checkBatchStatus(session, 
+                                                         jobId=x$jobId, 
+                                                         batchId=x$id)
+                         })
+status <- c()
+records.processed <- c()
+records.failed <- c()
+for(i in 1:length(batches_status)) {
+     status[i] <- batches_status[[i]]$state
+     records.processed[i] <- batches_status[[i]]$numberRecordsProcessed
+     records.failed[i] <- batches_status[[i]]$numberRecordsFailed
+}
+data.frame(status, records.processed, records.failed)
+# Details of each batch
+batches_detail <- lapply(batches_info, 
+                         FUN=function(x){
+                              rforcecom.getBatchDetails(session, 
+                                                        jobId=x$jobId, 
+                                                        batchId=x$id)
+                         })
+# Close job
+close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 
 
 # Test data loaded --------------------------------------------------------
@@ -163,3 +214,5 @@ load$year.relationship.start <- ifelse(load$year.relationship.start == 0, NA,
 rforcecom.logout(session)
 
 # Move loaded files to 'Previously loaded' folder
+file.copy()
+file.remove()
