@@ -10,16 +10,19 @@
 
 # Import to.load to R ---------------------------------------------------------
 
-# Create list with files to to.load
+# Create list with files to load
 setwd("../2. To be loaded")
 f.to.load <- list.files(pattern = ".xlsx")
+# Recommended to load files one by one (change index below)
+f.to.load <- f.to.load[1]
+
 
 # Import metadata of data to import
 library(googlesheets)
 library(dplyr)
 (my_sheets <- gs_ls())
 template.info <- gs_title("FDP - Data load template")
-# Questions coding
+# Import Questions coding
 q.coding <- template.info %>% gs_read(ws = "Questions coding", 
                                               range = "A1:D57" , colnames =TRUE)
 # Options
@@ -34,7 +37,7 @@ for (i in 1:length(f.to.load)) {
                           stringsAsFactors = FALSE)
      names(temp.to.load) <- q.coding$short.name
      temp.to.load <- temp.to.load[rowSums(is.na(temp.to.load)) != ncol(temp.to.load), ]
-     temp.to.load <- data.frame(file = rep(to.load[i], nrow(temp.to.load)), temp.to.load)
+     temp.to.load <- data.frame(file = rep(f.to.load[i], nrow(temp.to.load)), temp.to.load)
      ifelse(i == 1, to.load <- temp.to.load, to.load <- rbind(to.load, temp.to.load))
      rm(temp.to.load)
 }
@@ -46,18 +49,18 @@ for (i in 1:length(f.to.load)) {
 # Check that all required variables have information for all observations
 # farmer name
 nb.farmer.name <- length(!is.na(to.load$farmer.name))
-ifelse(nrow(to.load) == nb.farmer.name, "No blank fields",
+ifelse(nrow(to.load) == nb.farmer.name, "No blank farmer names",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
 View(to.load[is.na(to.load$farmer.name), ]) # See blanks
 # Assigned to
 nb.assigned.to <- length(!is.na(to.load$assigned.to))
-ifelse(nrow(to.load) == nb.assigned.to, "No blank fields",
+ifelse(nrow(to.load) == nb.assigned.to, "No blank assigned tos",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
 # Farmer code
 nb.farmer.code <- length(!is.na(to.load$farmer.code))
-ifelse(nrow(to.load) == nb.farmer.code, "No blank fields",
+ifelse(nrow(to.load) == nb.farmer.code, "No blank farmer codes",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
 
@@ -66,6 +69,12 @@ unique.codes <- length(unique(to.load$farmer.code))
 ifelse(nrow(to.load) == unique.codes, "All farmer codes are unique",
        warning("Duplicate codes found. Make sure that farmer codes are unique",
                call. = FALSE))
+# List duplicated codes
+dup.codes <- to.load$farmer.code[duplicated(to.load$farmer.code)]
+View(to.load[to.load$farmer.code %in% dup.codes, ])
+# Drop the duplicated (those with less information)
+to.load <- to.load[order(to.load$farmer.birthday), ] # first those with bday
+to.load <- to.load[!duplicated(to.load$farmer.code), ]
 
 # Check that farmer codes are not already assigned to farmers in Salesforce
 # Salesforce login
@@ -83,7 +92,7 @@ ifelse(sum(to.load$farmer.code %in% sf.codes$farmerCode__c) == 0,
 # Retrieve field officers names
 fo.sf.fields <- c("Name", "Id", "IsActive", "Email")
 fo.sf <- rforcecom.retrieve(session, "User", fo.sf.fields)
-# Check that Field officers emails are unique
+# Check that Field officers names are unique
 ifelse(length(fo.sf$Name) == length(unique(fo.sf$Name)),
        "No duplicated Field officers",
        warning("There are duplicated Field officers in Salesforce. Please check",
@@ -108,16 +117,20 @@ to.load <- left_join(to.load, select(fo.sf, Name, Id),
                   by = c("assigned.to" = "Name"))
 assigned <- is.na(to.load$Id)
 ifelse(length(assigned[assigned == FALSE]) == nrow(to.load),
-       "All farmers to load successfully assigned",
+       "All farmers to load successfully assigned to Field officers",
        warning("There are assigned.to blank. Please check.", call. = FALSE))
 # Change name to assign.to Id and replace assigned.to for this variable
-to.load <- select(to.load, farmer.name, Id, farmer.code:renovation.ha)
+to.load <- select(to.load, farmer.name, Id, farmer.code:plots)
 names(to.load)[names(to.load) == "Id"] <- "assigned.to"
 
 # farmer.birthday
 to.load$farmer.birthday #visual inspection
 # If date imported as integer (integer with 5 digits), run:
-to.load$farmer.birthday <- as.Date(to.load$farmer.birthday, origin = "1899-12-30")
+to.load$farmer.birthday <- as.Date(to.load$farmer.birthday, 
+                                   origin = "1899-12-30")
+# CAUTION: only for files with different origin:
+origin <- "1970-01-01"
+to.load$farmer.birthday <- as.Date(to.load$farmer.birthday, origin = origin)
 # If date contains day and month, remove:
 to.load$farmer.birthday <- as.integer(substr(as.character(to.load$farmer.birthday),
                                           1, 4))
@@ -137,8 +150,9 @@ to.load$spouse.bday <- as.Date(to.load$spouse.bday, origin = "1899-12-30")
 to.load$spouse.bday <- as.integer(substr(as.character(to.load$spouse.bday),
                                              1, 4))
 summary(to.load$spouse.bday) # summary
-# Remove data for farmers born before 1930
-to.load$spouse.bday <- ifelse(to.load$spouse.bday < 1930, 
+# Remove data for spouses born before 1930
+to.load$spouse.bday <- ifelse(to.load$spouse.bday < 1930 | 
+                                   to.load$spouse.bday > 2010, 
                               NA, to.load$spouse.bday)
 # Summarize (last step to check)
 summary(to.load$spouse.bday)
@@ -159,30 +173,48 @@ summary(to.load$year.relationship.start)
 
 # Gender
 table(to.load$gender)
-# L=male, P=female
-to.load$gender <- ifelse(to.load$gender == "L", "Male", "Female")
+# Only Male and Female
+wrong.male <- c("L", "Laki-laki")
+wrong.fem <- c("P", "Famale")
+to.load$gender <- ifelse(to.load$gender %in% wrong.male, "Male",
+                         ifelse(to.load$gender %in% wrong.fem, "Female",
+                                to.load$gender))
+table(to.load$gender)
 
 # Educational level
-# Farmer
-educ.levels.load <- as.data.frame(table(to.load$educational.level))
-educ.levels.load
-educ.levels.correct <- q.options$option[q.options$short.name == 
-                                             "educational.level"]
-# Spouse
-sp.educ.levels.load <- as.data.frame(table(to.load$spouse.education))
-sp.educ.levels.load
-educ.levels.correct <- q.options$option[q.options$short.name == 
-                                             "educational.level"]
+# Educational levels valid values
+educ.valid <- q.options$option[q.options$short.name == "educational.level"]
+# Import hash table for FDP to data sent values equivalence
+values.equivs <- template.info %>% gs_read(ws = "Values equivalences",
+                                      colnames =TRUE)
+# FARMER
+table(to.load$educational.level %in% educ.valid) #false: non valid values
+# Create variable with correct values
+educ.correct <- c()
+for(i in 1:nrow(to.load)) {
+     educ.correct[i] <- ifelse(to.load$educational.level[i] %in% values.equivs$fdp.value,
+                               to.load$educational.level[i], 
+                               ifelse(to.load$educational.level[i] %in% values.equivs$value,
+                                      values.equivs$fdp.value[values.equivs$value == to.load$educational.level[i]],
+                                      NA))
+}
+table(is.na(educ.correct)) #there should be only NAs from to.load$education
+to.load$educational.level <- educ.correct
+# SPOUSE
+
 
 # Have spouse
 table(to.load$spouse)
-# Duda=widow, Janda=widow, if any of these:
-wrong.spouse <- c("Duda", "Janda") # List of wrong options
-to.load$spouse <- ifelse(to.load$spouse %in% wrong.spouse,
-                         "No", to.load$spouse)
+# Correct different options (Duda, Janda = Widow)
+wrong.yes <- c("yes")
+wrong.no <- c("no", "Duda", "Janda")
+to.load$spouse <- ifelse(to.load$spouse %in% wrong.yes, "Yes",
+                         ifelse(to.load$spouse %in% wrong.no, "No",
+                                to.load$spouse))
+table(to.load$spouse)
 
 # Farmer group (check if there seem  to be misspellings -i.e. very similarly
-# spelling groups)
+# spelled groups)
 groups <- as.data.frame(table(to.load$farmer.group))
 groups[order(groups$Var1), ]
 
