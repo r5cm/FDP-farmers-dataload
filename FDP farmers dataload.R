@@ -28,6 +28,9 @@ q.coding <- template.info %>% gs_read(ws = "Questions coding",
 # Options
 q.options <- template.info %>% gs_read(ws = "Questions options",
                                        range = "A1:B25", colnames = TRUE)
+# Import table for FDP to data sent values equivalence
+values.equivs <- template.info %>% gs_read(ws = "Values equivalences",
+                                           colnames =TRUE)
 
 # Import files to to.load
 library(xlsx)
@@ -55,7 +58,7 @@ ifelse(nrow(to.load) == nb.farmer.name, "No blank farmer names",
 View(to.load[is.na(to.load$farmer.name), ]) # See blanks
 # Assigned to
 nb.assigned.to <- length(!is.na(to.load$assigned.to))
-ifelse(nrow(to.load) == nb.assigned.to, "No blank assigned tos",
+ifelse(nrow(to.load) == nb.assigned.to, "No blank assigned to's",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
 # Farmer code
@@ -95,7 +98,7 @@ fo.sf <- rforcecom.retrieve(session, "User", fo.sf.fields)
 # Check that Field officers names are unique
 ifelse(length(fo.sf$Name) == length(unique(fo.sf$Name)),
        "No duplicated Field officers",
-       warning("There are duplicated Field officers in Salesforce. Please check",
+       warning("There are duplicated Field officers in Salesforce. Please check.",
                call. = FALSE))
 fo.sf[duplicated(fo.sf$Name), ] # Find duplicated field officer names
 fo.sf[fo.sf$Name == "Hasdir Hasdir", ] # List duplicated field officer
@@ -109,6 +112,7 @@ ifelse(length(fo.to.load.in.sf[fo.to.load.in.sf == FALSE]) == 0,
        "All field officers assigned exist in Salesforce",
        warning("There are field officers that were not found in Salesforce",
                call. = FALSE))
+# If there are missing FOs in Salesforce
 fo.to.load[fo.to.load.in.sf == FALSE] # List FOs not found
 View(fo.sf[order(as.character(fo.sf$Name)), ]) # List FOs in SF
 
@@ -182,26 +186,38 @@ to.load$gender <- ifelse(to.load$gender %in% wrong.male, "Male",
 table(to.load$gender)
 
 # Educational level
+table(to.load$educational.level)
 # Educational levels valid values
 educ.valid <- q.options$option[q.options$short.name == "educational.level"]
-# Import hash table for FDP to data sent values equivalence
-values.equivs <- template.info %>% gs_read(ws = "Values equivalences",
-                                      colnames =TRUE)
+educ.equiv <- values.equivs[values.equivs$question == "educational.level",]
 # FARMER
 table(to.load$educational.level %in% educ.valid) #false: non valid values
 # Create variable with correct values
 educ.correct <- c()
 for(i in 1:nrow(to.load)) {
-     educ.correct[i] <- ifelse(to.load$educational.level[i] %in% values.equivs$fdp.value,
+     educ.correct[i] <- ifelse(to.load$educational.level[i] %in% educ.valid,
                                to.load$educational.level[i], 
-                               ifelse(to.load$educational.level[i] %in% values.equivs$value,
-                                      values.equivs$fdp.value[values.equivs$value == to.load$educational.level[i]],
+                               ifelse(to.load$educational.level[i] %in% educ.equiv$value,
+                                      educ.equiv$fdp.value[educ.equiv$value == to.load$educational.level[i]],
                                       NA))
 }
-table(is.na(educ.correct)) #there should be only NAs from to.load$education
+View(table(data.frame(educ.correct, to.load$educational.level)))
 to.load$educational.level <- educ.correct
 # SPOUSE
-
+table(to.load$spouse.education)
+sp.educ.equiv <- values.equivs[values.equivs$question == "spouse.education",]
+table(to.load$spouse.education %in% educ.valid) #false: non valid values
+# Create variable with correct values
+sp.educ.correct <- c()
+for(i in 1:nrow(to.load)) {
+     sp.educ.correct[i] <- ifelse(to.load$spouse.education[i] %in% educ.valid,
+                               to.load$spouse.education[i], 
+                               ifelse(to.load$spouse.education[i] %in% sp.educ.equiv$value,
+                                      sp.educ.equiv$fdp.value[sp.educ.equiv$value == to.load$spouse.education[i]],
+                                      NA))
+}
+View(table(data.frame(sp.educ.correct, to.load$spouse.education)))
+to.load$spouse.education <- sp.educ.correct
 
 # Have spouse
 table(to.load$spouse)
@@ -219,10 +235,12 @@ groups <- as.data.frame(table(to.load$farmer.group))
 groups[order(groups$Var1), ]
 
 # Farm certifications
-table(to.load$certifications)
+table(to.load$certifications, useNA = 'always')
 
 # Farm area in cocoa
-table(to.load$cocoa.cultivation.ha)
+table(to.load$cocoa.cultivation.ha, useNA = 'always')
+to.load$cocoa.cultivation.ha <- ifelse(to.load$cocoa.cultivation.ha > 49,
+                                       NA, to.load$cocoa.cultivation.ha)
 
 # Final visual inspection to all data
 sapply(to.load, table)
@@ -280,6 +298,7 @@ copy.name <- paste("../3. Previously loaded/data_loaded_",
                    substr(Sys.time(), 1, 10), ".csv",
                    sep = "")
 copy <- rforcecom.retrieve(session, "FDP_submission__c", q.coding$api.name)
+
 write.csv(copy, copy.name)
 
 
@@ -292,3 +311,4 @@ rforcecom.logout(session)
 file.copy(f.to.load,
           paste("../3. Previously loaded/", f.to.load, sep = ""))
 file.remove(f.to.load)
+
