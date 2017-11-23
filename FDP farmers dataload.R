@@ -1,8 +1,8 @@
 
 # Initial inspection of Excel files ---------------------------------------
 
-# - Make sure the sheet that contains data is named 'Template for data to.load'
-# - Make sure that there are no old files in the 'To be to.loaded' folder
+# - Make sure the sheet that contains data is named 'Template for data load'
+# - Make sure that there are no old files in the 'To be loaded' folder
 # - Do a quick visual inspection of the file
 # - Make sure there are no hidden rows or columns
 # - Make sure that data start in cell A1
@@ -11,7 +11,7 @@
 # Import to.load to R ---------------------------------------------------------
 
 # Create list with files to load
-setwd("../2. To be loaded")
+setwd("2. To be loaded")
 f.to.load <- list.files(pattern = ".xlsx")
 # Recommended to load files one by one (change index below)
 f.to.load <- f.to.load[1]
@@ -32,7 +32,7 @@ q.options <- template.info %>% gs_read(ws = "Questions options",
 values.equivs <- template.info %>% gs_read(ws = "Values equivalences",
                                            colnames =TRUE)
 
-# Import files to to.load
+# Import files to load
 library(xlsx)
 for (i in 1:length(f.to.load)) {
      temp.to.load <- read.xlsx(f.to.load[i], sheetName = "Template for data load",
@@ -40,7 +40,6 @@ for (i in 1:length(f.to.load)) {
                           stringsAsFactors = FALSE)
      names(temp.to.load) <- q.coding$short.name
      temp.to.load <- temp.to.load[rowSums(is.na(temp.to.load)) != ncol(temp.to.load), ]
-     temp.to.load <- data.frame(file = rep(f.to.load[i], nrow(temp.to.load)), temp.to.load)
      ifelse(i == 1, to.load <- temp.to.load, to.load <- rbind(to.load, temp.to.load))
      rm(temp.to.load)
 }
@@ -126,6 +125,18 @@ ifelse(length(assigned[assigned == FALSE]) == nrow(to.load),
 # Change name to assign.to Id and replace assigned.to for this variable
 to.load <- select(to.load, farmer.name, Id, farmer.code:plots)
 names(to.load)[names(to.load) == "Id"] <- "assigned.to"
+
+# Village: check that villages exist in Salesforce
+villages.sf <- rforcecom.retrieve(session, "village__c", "Name")
+ifelse(sum(to.load$village %in% villages.sf$Name) < nrow(to.load),
+       warning("There are villages in the file that do not exist in SF", call. = FALSE),
+       "All villages in the file exist in Salesforce")
+# IF there are missing villages, list them:
+villages.notsf <- !(to.load$village %in% villages.sf$Name)
+View(data.frame(unique(to.load$village[villages.notsf])))
+
+# Leave phone number as only number
+to.load$phone.number <- gsub(" ", "", to.load$phone.number)
 
 # farmer.birthday
 to.load$farmer.birthday #visual inspection
@@ -251,18 +262,25 @@ sapply(to.load, table)
 
 # Change variable names to API names
 names(to.load) <- q.coding$api.name
+# Add country, owner and plot1_area==0
+to.load <- data.frame(Country__c = rep("Indonesia", nrow(to.load)),
+                      ownerId = to.load$Assigned_to__c,
+                      plot1Area__c = rep(0, nrow(to.load)),
+                      to.load)
+
+
 
 # to.load data to Salesforce
 # Create job
 job_info <- rforcecom.createBulkJob(session, 
                                     operation='insert', 
                                     object='FDP_submission__c')
-# to.load data
+# Load data
 batches_info <- rforcecom.createBulkBatch(session, 
                                           jobId=job_info$id, 
                                           to.load, 
                                           multiBatch = TRUE, 
-                                          batchSize = 50)
+                                          batchSize = 5)
 
 # Batches status
 batches_status <- lapply(batches_info, 
@@ -274,6 +292,7 @@ batches_status <- lapply(batches_info,
 status <- c()
 records.processed <- c()
 records.failed <- c()
+message <- c()
 for(i in 1:length(batches_status)) {
      status[i] <- batches_status[[i]]$state
      records.processed[i] <- batches_status[[i]]$numberRecordsProcessed
