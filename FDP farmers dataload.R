@@ -2,6 +2,7 @@
 # Initial inspection of Excel files ---------------------------------------
 
 # - Make sure the sheet that contains data is named 'Template for data load'
+# - Make sure that the file has the same columns that the Data load template
 # - Make sure that there are no old files in the 'To be loaded' folder
 # - Do a quick visual inspection of the file
 # - Make sure there are no hidden rows or columns
@@ -11,7 +12,7 @@
 # Import to.load to R ---------------------------------------------------------
 
 # Create list with files to load
-setwd("2. To be loaded")
+setwd("../2. To be loaded")
 f.to.load <- list.files(pattern = ".xlsx")
 # Recommended to load files one by one (change index below)
 f.to.load <- f.to.load[1]
