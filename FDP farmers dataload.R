@@ -51,18 +51,18 @@ for (i in 1:length(f.to.load)) {
 
 # Check that all required variables have information for all observations
 # farmer name
-nb.farmer.name <- length(!is.na(to.load$farmer.name))
+nb.farmer.name <- sum(!is.na(to.load$farmer.name))
 ifelse(nrow(to.load) == nb.farmer.name, "No blank farmer names",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
 View(to.load[is.na(to.load$farmer.name), ]) # See blanks
 # Assigned to
-nb.assigned.to <- length(!is.na(to.load$assigned.to))
+nb.assigned.to <- sum(!is.na(to.load$assigned.to))
 ifelse(nrow(to.load) == nb.assigned.to, "No blank assigned to's",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
 # Farmer code
-nb.farmer.code <- length(!is.na(to.load$farmer.code))
+nb.farmer.code <- sum(!is.na(to.load$farmer.code))
 ifelse(nrow(to.load) == nb.farmer.code, "No blank farmer codes",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
@@ -83,18 +83,22 @@ to.load <- to.load[!duplicated(to.load$farmer.code), ]
 # Salesforce login
 library(RForcecom)
 username <- "admin@utzmars.org"
-password <- "gfutzmars2017**oyCqeCwuJQCCfOBACJKmKOIr8"
+password <- "gfutzmars2018n0ljYwQQqYVWfu9RIfPqWIn8"
 session <- rforcecom.login(username, password)
 # Retrieve existing farmer codes and check if exist in data to to.load
 sf.codes <- rforcecom.retrieve(session, "FDP_submission__c", "farmerCode__c")
 ifelse(sum(to.load$farmer.code %in% sf.codes$farmerCode__c) == 0,
        "No repeated farmer codes found in Salesforce",
        warning("At least one farmer code already in Salesforce", call. = FALSE))
+# List farmers to load found in Salesforce
+found.sf <- to.load[to.load$farmer.code %in% sf.codes$farmerCode__c, ]
 
 # Check that field officers exist in Salesforce (FIX THIS WHEN UNIQUE FIELD!!!)
 # Retrieve field officers names
-fo.sf.fields <- c("Name", "Id", "IsActive", "Email")
+fo.sf.fields <- c("Name", "Id", "IsActive", "Email", "Mars_role__c")
 fo.sf <- rforcecom.retrieve(session, "User", fo.sf.fields)
+# Leave only FCs
+fo.sf <- fo.sf[grepl("Field Coordinator", fo.sf$Mars_role__c), ]
 # Check that Field officers names are unique
 ifelse(length(fo.sf$Name) == length(unique(fo.sf$Name)),
        "No duplicated Field officers",
@@ -105,6 +109,25 @@ fo.sf[fo.sf$Name == "Hasdir Hasdir", ] # List duplicated field officer
 fo.sf <- fo.sf[fo.sf$Id != "00528000004BKRFAA4", ] # Remove a FO from list
 # Run again first line above (ifelse(length(fo.sf$...)))
 
+# Fix FCs names to corresponding SF names
+fc.correct.names <- gs_read(ss = template.info, ws = "FC equivalences", colnames = TRUE)
+# Check if all names contained in to.load are in fc.correct.names
+ifelse(sum(!(to.load$assigned.to %in% fc.correct.names$Sent || 
+                  to.load$assigned.to %in% fc.correct.names$Salesforce)) == 0,
+           "All sent names in correct SF names table",
+           warning("Names not contained in correct SF names table", call. = FALSE))
+# If there are missing names above, list them
+to.load$assigned.to[!(to.load$assigned.to %in% fc.correct.names$Sent || 
+                           to.load$assigned.to %in% fc.correct.names$Salesforce)]
+# Add SF names
+for(i in 1:nrow(to.load)) {
+     # Find position of sent name in equivalences table and replace with SF name
+     if(to.load$assigned.to[i] %in% fc.correct.names$Sent) {
+          temp.equiv.pos <- grep(to.load$assigned.to[i], fc.correct.names$Sent)
+          to.load$assigned.to[i] <- fc.correct.names$Salesforce[temp.equiv.pos]
+          rm(temp.equiv.pos)
+     }
+}
 # Check the FOs assigned to farmers that will be loaded exist in Salesforce
 fo.to.load <- unique(to.load$assigned.to) # list of FO in farmers to load
 fo.to.load.in.sf <- fo.to.load %in% fo.sf$Name # check if exist in Salesforce
@@ -127,7 +150,11 @@ ifelse(length(assigned[assigned == FALSE]) == nrow(to.load),
 to.load <- select(to.load, farmer.name, Id, farmer.code:plots)
 names(to.load)[names(to.load) == "Id"] <- "assigned.to"
 
-# Village: check that villages exist in Salesforce
+# Village
+# No missing villages (required) - list them
+na.villages.ind <- is.na(to.load$village)
+missing.villages <- to.load[na.villages.ind, c("farmer.name", "farmer.code")]
+# check that villages exist in Salesforce
 villages.sf <- rforcecom.retrieve(session, "village__c", "Name")
 ifelse(sum(to.load$village %in% villages.sf$Name) < nrow(to.load),
        warning("There are villages in the file that do not exist in SF", call. = FALSE),
@@ -250,7 +277,7 @@ groups[order(groups$Var1), ]
 table(to.load$certifications, useNA = 'always')
 
 # Farm area in cocoa
-table(to.load$cocoa.cultivation.ha, useNA = 'always')
+dist.farm.area <- as.data.frame(table(to.load$cocoa.cultivation.ha, useNA = 'always'))
 to.load$cocoa.cultivation.ha <- ifelse(to.load$cocoa.cultivation.ha > 49,
                                        NA, to.load$cocoa.cultivation.ha)
 
