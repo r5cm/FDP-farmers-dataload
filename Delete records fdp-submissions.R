@@ -8,7 +8,7 @@ session <- rforcecom.login(username, password)
 delete <- rforcecom.retrieve(session, "FDP_submission__c", 
                              c("Id", "CreatedDate"))
 delete$CreatedDate <- substr(as.character(delete$CreatedDate), 1, 10)
-delete <- delete[delete$CreatedDate == "2017-10-10", ]
+delete <- delete[delete$CreatedDate == "2018-02-21", ]
 delete <-  data.frame(delete[1])
 
 # Delete records

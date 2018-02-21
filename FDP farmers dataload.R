@@ -2,7 +2,7 @@
 # Initial inspection of Excel files ---------------------------------------
 
 # - Make sure the sheet that contains data is named 'Template for data load'
-# - Make sure that the file has the same columns that the Data load template
+# - Make sure that the file has the same columns that the Data load template (56)
 # - Make sure that there are no old files in the 'To be loaded' folder
 # - Do a quick visual inspection of the file
 # - Make sure there are no hidden rows or columns
@@ -22,7 +22,7 @@ f.to.load <- f.to.load[1]
 library(googlesheets)
 library(dplyr)
 (my_sheets <- gs_ls())
-template.info <- gs_title("FDP - Data load template")
+template.info <- gs_title("FDP - Data load references")
 # Import Questions coding
 q.coding <- template.info %>% gs_read(ws = "Questions coding", 
                                               range = "A1:D57" , colnames =TRUE)
@@ -112,12 +112,13 @@ fo.sf <- fo.sf[fo.sf$Id != "00528000004BKRFAA4", ] # Remove a FO from list
 # Fix FCs names to corresponding SF names
 fc.correct.names <- gs_read(ss = template.info, ws = "FC equivalences", colnames = TRUE)
 # Check if all names contained in to.load are in fc.correct.names
-ifelse(sum(!(to.load$assigned.to %in% fc.correct.names$Sent || 
+ifelse(sum(!(to.load$assigned.to %in% fc.correct.names$Sent | 
                   to.load$assigned.to %in% fc.correct.names$Salesforce)) == 0,
            "All sent names in correct SF names table",
-           warning("Names not contained in correct SF names table", call. = FALSE))
+           warning("There are FC names not contained in correct SF names table",
+                   call. = FALSE))
 # If there are missing names above, list them
-to.load$assigned.to[!(to.load$assigned.to %in% fc.correct.names$Sent || 
+to.load$assigned.to[!(to.load$assigned.to %in% fc.correct.names$Sent | 
                            to.load$assigned.to %in% fc.correct.names$Salesforce)]
 # Add SF names
 for(i in 1:nrow(to.load)) {
@@ -130,8 +131,7 @@ for(i in 1:nrow(to.load)) {
 }
 # Check the FOs assigned to farmers that will be loaded exist in Salesforce
 fo.to.load <- unique(to.load$assigned.to) # list of FO in farmers to load
-fo.to.load.in.sf <- fo.to.load %in% fo.sf$Name # check if exist in Salesforce
-ifelse(length(fo.to.load.in.sf[fo.to.load.in.sf == FALSE]) == 0,
+ifelse(sum(!(fo.to.load %in% fo.sf$Name)) == 0,
        "All field officers assigned exist in Salesforce",
        warning("There are field officers that were not found in Salesforce",
                call. = FALSE))
@@ -153,10 +153,28 @@ names(to.load)[names(to.load) == "Id"] <- "assigned.to"
 # Village
 # No missing villages (required) - list them
 na.villages.ind <- is.na(to.load$village)
+table(na.villages.ind) #all should be FALSE
 missing.villages <- to.load[na.villages.ind, c("farmer.name", "farmer.code")]
+# Remove space from end of village names
+for(i in 1:nrow(to.load)) {
+     vill.nchar <- nchar(to.load$village[i])
+     if(substr(to.load$village[i], vill.nchar, vill.nchar) == " ") {
+          to.load$village[i] <- substr(to.load$village[i], 1, vill.nchar - 1)
+     }
+     rm(vill.nchar)
+}
+# Correct names using the equivalences table
+village.equivs <- gs_read(template.info, ws = "Village equivalences")
+for(i in 1:nrow(to.load)) {
+     if(to.load$village[i] %in% village.equivs$Incorrect) {
+          temp.pos <- grep(to.load$village[i], village.equivs$Incorrect)
+          to.load$village[i] <- village.equivs$Correct[temp.pos]
+          rm(temp.pos)
+     }
+}
 # check that villages exist in Salesforce
 villages.sf <- rforcecom.retrieve(session, "village__c", "Name")
-ifelse(sum(to.load$village %in% villages.sf$Name) < nrow(to.load),
+ifelse(sum(!(to.load$village %in% villages.sf$Name)) > 0,
        warning("There are villages in the file that do not exist in SF", call. = FALSE),
        "All villages in the file exist in Salesforce")
 # IF there are missing villages, list them:
@@ -222,7 +240,7 @@ wrong.fem <- c("P", "Famale")
 to.load$gender <- ifelse(to.load$gender %in% wrong.male, "Male",
                          ifelse(to.load$gender %in% wrong.fem, "Female",
                                 to.load$gender))
-table(to.load$gender)
+table(to.load$gender, useNA = 'always')
 
 # Educational level
 table(to.load$educational.level)
@@ -296,8 +314,6 @@ to.load <- data.frame(Country__c = rep("Indonesia", nrow(to.load)),
                       plot1Area__c = rep(0, nrow(to.load)),
                       to.load)
 
-
-
 # to.load data to Salesforce
 # Create job
 job_info <- rforcecom.createBulkJob(session, 
@@ -306,10 +322,9 @@ job_info <- rforcecom.createBulkJob(session,
 # Load data
 batches_info <- rforcecom.createBulkBatch(session, 
                                           jobId=job_info$id, 
-                                          to.load, 
+                                          to.load[c(253, 287), ], 
                                           multiBatch = TRUE, 
-                                          batchSize = 5)
-
+                                          batchSize = 1)
 # Batches status
 batches_status <- lapply(batches_info, 
                          FUN=function(x){
