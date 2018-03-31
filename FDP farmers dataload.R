@@ -83,7 +83,7 @@ to.load <- to.load[!duplicated(to.load$farmer.code), ]
 # Salesforce login
 library(RForcecom)
 username <- "admin@utzmars.org"
-password <- "gfutzmars2018n0ljYwQQqYVWfu9RIfPqWIn8"
+password <- "gfutzmars2018*hn5OC4tzSecOhgHKnUtZL05C"
 session <- rforcecom.login(username, password)
 # Retrieve existing farmer codes and check if exist in data to to.load
 sf.codes <- rforcecom.retrieve(session, "FDP_submission__c", "farmerCode__c")
