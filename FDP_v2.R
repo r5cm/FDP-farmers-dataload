@@ -187,10 +187,12 @@ View(data.frame(unique(to.load$village[villages.notsf])))
 write.csv(unique(to.load[villages.notsf, c("assigned.to", "village")]),
           "missing_villages.csv")
 
-
 # Create missing villages
 # Get villages that are not in Salesforce, and their FCs
 new_vill <- unique(to.load[villages.notsf, c("assigned.to", "village")])
+# Remove/REPLACE special characters (FIX THIS)
+new_vill <- gsub(".^[\x20-\x7F].", 'maría', '')
+
 # Add district name to villages
 new_vill <- left_join(new_vill, fo.sf[, c("Id", "Contact.District__r.Name")],
                       by=c("assigned.to" = "Id"))
