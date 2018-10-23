@@ -188,10 +188,13 @@ write.csv(unique(to.load[villages.notsf, c("assigned.to", "village")]),
           "missing_villages.csv")
 
 # Create missing villages
+
 # Get villages that are not in Salesforce, and their FCs
 new_vill <- unique(to.load[villages.notsf, c("assigned.to", "village")])
-# Remove/REPLACE special characters (FIX THIS)
-new_vill <- gsub(".^[\x20-\x7F].", 'maría', '')
+# Remove/REPLACE special characters (TEST FIRST TIME WITH REAL DATA)
+library(stringi)
+new_vill <- stringi::stri_trans_general(test, "latin-ascii")
+new_vill <- gsub("\'", '', new_vill)
 
 # Add district name to villages
 new_vill <- left_join(new_vill, fo.sf[, c("Id", "Contact.District__r.Name")],
