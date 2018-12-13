@@ -603,7 +603,7 @@ close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 # 6. Save copy of data loaded ------------------------------------------------
 
 
-# Create directory
+# Create directory to back everything up
 
 setwd("../3_Previously_loaded")
 dir.create(path = paste("v2_", load_date, sep = ""))
@@ -611,29 +611,54 @@ dir.create(path = paste("v2_", load_date, sep = ""))
 # Save data before it was loaded to Salesforce
 
 dir.path <- paste("v2_", load_date, sep = "")
-save(tl.submission, tl.farmer, tl.farm, tl.farmbl, 
-     paste(dir.path, '/data_loaded.RData', sep = ""))
-write.csv(tl.submission, paste(dir.path, '/submission_loaded.csv', sep = ""))
-write.csv(tl.farmer, paste(dir.path,  '/farmer_loaded.csv', sep = ""))
-write.csv(tl.farm, paste(dir.path, '/farm_loaded.csv', sep = ""))
-write.csv(tl.farmbl, paste(dir.path, '/farmbaseline_loaded.csv', sep = ""))
+rdata.path <- paste(dir.path, '/data_loaded.RData', sep = "")
+save(tl.submission, tl.farmer, tl.farm, tl.farmbl, file = rdata.path)
+write.csv(tl.submission, paste(dir.path, '/loaded_submission.csv', sep = ""))
+write.csv(tl.farmer, paste(dir.path,  '/loaded_farmers.csv', sep = ""))
+write.csv(tl.farm, paste(dir.path, '/loaded_farms.csv', sep = ""))
+write.csv(tl.farmbl, paste(dir.path, '/loaded_farmbaseline.csv', sep = ""))
 
-# Save data in Salesforce
+# Save data from Salesforce
 
-copy.name <- paste(dir.path, "/loaded_in_salesforce.csv", sep = "")
+# Submissions
+sf.submission.query <- 
+     paste("SELECT ", paste(names(tl.submission), collapse = ", "),
+           " FROM fpd_Submission__c WHERE createdDate = TODAY AND Id_v1__c != null",
+           sep = "")
+write.csv(rforcecom.query(session, sf.submission.query),
+          file = paste(dir.path, "/salesforce_submissions.csv", sep = ""))
 
-#### RETRIEVE ONLY TODAY'S
-copy <- rforcecom.retrieve(session, "FDP_submission__c", q.coding$api.name)
+# Farmers
+sf.farmer.query <- 
+     paste("SELECT ", paste(names(tl.farmer), collapse = ", "),
+           " FROM fdp_farmer__c WHERE createdDate = TODAY AND Id_v1__c != null",
+           sep = "")
+write.csv(rforcecom.query(session, sf.farmer.query),
+          file = paste(dir.path, "/salesforce_farmers.csv", sep = ""))
 
-write.csv(copy, copy.name)
+# Farms
+sf.farm.query <- 
+     paste("SELECT ", paste(names(tl.farm), collapse = ", "),
+           " FROM fdp_Farm__c WHERE createdDate = TODAY AND Id_v1__c != null",
+           sep = "")
+write.csv(rforcecom.query(session, sf.farm.query),
+          file = paste(dir.path, "/salesforce_farms.csv", sep = ""))
+
+# Farm baselines
+sf.farmbl.query <- 
+     paste("SELECT ", paste(names(tl.farmbl), collapse = ", "),
+           " FROM fdp_Farm_BL__c WHERE createdDate = TODAY AND Id_v1__c != null",
+           sep = "")
+write.csv(rforcecom.query(session, sf.farmbl.query),
+          file = paste(dir.path, "/salesforce_submission.csv", sep = ""))
 
 
-# 7. Organize ----------------------------------------------------------------
+# Move file from "To be loaded" to "Previously loaded" folder
+
+file.copy(paste("../2_To_be_loaded/", f.to.load, sep = ""),
+          paste(dir.path, "/", f.to.load, sep = ""))
+file.remove(paste("../2_To_be_loaded/", f.to.load, sep = ""))
 
 # Logout from Salesforce
-rforcecom.logout(session)
 
-# Move to.loaded files to 'Previously to.loaded' folder
-file.copy(f.to.load,
-          paste("../3_Previously_loaded/", f.to.load, sep = ""))
-file.remove(f.to.load)
+rforcecom.logout(session)
