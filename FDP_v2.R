@@ -111,8 +111,8 @@ fo.sf <- fo.sf[grepl("Field Coordinator", fo.sf$Mars_role__c), ]
 
 # Check that user names are unique
 ifelse(length(fo.sf$Name) == length(unique(fo.sf$Name)),
-       "No duplicated Field officers",
-       warning("There are duplicated Field officers in Salesforce. Please check.",
+       "No duplicated Users",
+       warning("There are duplicated Users in Salesforce. Please check.",
                call. = FALSE))
 fo.sf[duplicated(fo.sf$Name), ] # Print duplicated field officer names
 
@@ -125,7 +125,7 @@ fc.correct.names <- gs_read(ss = template.info, ws = "FC equivalences", colnames
 # Check if all names in the file are in fc.correct.names
 ifelse(sum(!(to.load$assigned.to %in% fc.correct.names$Sent | 
                   to.load$assigned.to %in% fc.correct.names$Salesforce)) == 0,
-       "All sent names in correct SF names table",
+       "All sent names in correct SF names table, some may be mispelled",
        warning("There are FC names not contained in correct SF names table",
                call. = FALSE))
 
@@ -217,16 +217,15 @@ new.vill <- unique(to.load[villages.notsf, c("assigned.to", "village")])
 
 # Remove/replace special characters (TEST FIRST TIME WITH REAL DATA)
 library(stringi)
-new.vill$village <- stringi::stri_trans_general(new.vill, "latin-ascii")
-new.vill <- gsub("\'", '', new.vill)
+new.vill$village <- stri_trans_general(new.vill$village, "latin-ascii")
 
 # Add district name to villages
-new_vill <- left_join(new_vill, fo.sf[, c("Id", "Contact.District__r.Name")],
+new.vill <- left_join(new.vill, fo.sf[, c("Id", "Contact.District__r.Name")],
                       by=c("assigned.to" = "Id"))
 
 # Add district id to villages
 sf.districts <- rforcecom.retrieve(session, "fpd_district__c", c("Id", "Name"))
-new_vill <- left_join(new_vill, sf.districts, 
+new.vill <- left_join(new.vill, sf.districts, 
                       by=c("Contact.District__r.Name" = "Name"))
 
 # Create data load job
@@ -248,15 +247,12 @@ batches_status <- lapply(batches_info,
                                                          batchId=x$id)
                          })
 
-# Close job
+# Close job and export villages created as csv
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
-
-# Export villages created
 write.csv(new_vill$Name, "Villages_created.csv", append = TRUE)
 
 
-
-# Phon number: remove all non-numbers
+# Phone number: remove all non-numbers
 
 to.load$phone.number <- gsub(" ", "", to.load$phone.number)
 
@@ -418,16 +414,30 @@ sapply(to.load, table)
 
 # 4. Create dataframe per object -------------------------------------------------------
 
+
+# Get Salesforce object names, for V2 model
+
 v1_v2 <- gs_read(ss = template.info, ws = "v1_to_v2", range = "A1:C58", colnames = T)
 v2_objects <- unique(v1_v2$Object)
 v2_objects <- v2_objects[!is.na(v2_objects)]
 
+
+# Add unique id to records that will be loaded
+
 load_date = strtrim(Sys.Date(), 10)
 load.ids = c()
 for(i in 1:nrow(to.load)) {
-     load.ids[i] = paste(load_date, sprintf("%08d", i), sep = "")
+     load.ids[i] = paste(load_date, "-", sprintf("%04d", i), sep = "")
 }
 na.rows <- rep(NA, nrow(to.load))
+
+
+# Split into different tables, one per Salesforce object
+ 
+# Change r.names to Salesforce names (from Object model V1). These are changed in the
+# next steps for the V2 names.
+
+names(to.load) <- q.coding$api.name
 
 # Submission
 tl.submission = data.frame(Id_v1__c = load.ids,
@@ -494,17 +504,24 @@ close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 # Farmers 1 (farm blank)
 
 # Add village Ids
+
 sf.vill <- rforcecom.retrieve(session, "fpd_village__c", c("Id", "Name"))
 sf.vill <- sf.vill[!duplicated(sf.vill$Name), ]
 tl.farmer$village__c <- left_join(tl.farmer, sf.vill, by = c("village__c" = "Name"))[["Id"]]
+
 # Add submission Id
+
 sub.sql <- "SELECT Id, Id_v1__c FROM fpd_Submission__c WHERE CreatedDate >= 2018-09-07T00:00:00Z AND CreatedDate < 2018-09-09T00:00:00Z"
 sf.sub <- rforcecom.query(session, sub.sql) # retrieve submissions from SF
 tl.farmer$FDP_submission__c <- left_join(tl.farmer, sf.sub, 
                                          by = c("FDP_submission_v1__c" = "Id_v1__c"))[["Id"]]
+
 # Drop gps field (no permission, fix if data exist)
+
 tl.farmer <- subset(tl.farmer, select = -gps__c)
+
 # Load farmers
+
 load.sf('insert', 'fdp_farmer__c', tl.farmer, 1)
 batch.status(batches_info)
 batch.detail(batches_info)
@@ -514,25 +531,32 @@ close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 # Submission 2 (fill respondent)
 
 # Add farmers
+
 farmer.sql <- "SELECT Id, Id_v1__c FROM fdp_farmer__c WHERE CreatedDate >= 2018-09-07T00:00:00Z AND CreatedDate < 2018-09-09T00:00:00Z"
 sf.farmer <- rforcecom.query(session, farmer.sql)
 tu.submission <- left_join(sf.sub, sf.farmer, by = "Id_v1__c")
 tu.submission <- data.frame(Id = tu.submission$Id.x, Respondent__c = tu.submission$Id.y)
+
 # Update farmers
+
 load.sf('update', 'fpd_Submission__c', tu.submission, 1)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 
+
 # Farm
 
 # Add submission
+
 tl.farm$FDP_submission__c <- left_join(tl.farm, sf.sub, 
                                        by = c("FDP_submission_v1__c" = "Id_v1__c"))[["Id"]]
 # Add farmer
+
 tl.farm$farmer__c <- left_join(tl.farm, sf.farmer,
                                by = c("farmer_v1__c" = "Id_v1__c"))[["Id"]]
 # Load farms
+
 load.sf('insert', 'fdp_Farm__c', tl.farm, 1)
 batch.status(batches_info)
 batch.detail(batches_info)
@@ -542,11 +566,14 @@ close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 # Farmer 2 (fill farm)
 
 # Add farm
+
 farm.sql <- "SELECT Id, Id_v1__c FROM fdp_Farm__c WHERE CreatedDate >= 2018-09-07T00:00:00Z AND CreatedDate < 2018-09-09T00:00:00Z"
 sf.farm <- rforcecom.query(session, farm.sql)
 tu.farmer <- left_join(sf.farmer, sf.farm, by = "Id_v1__c")
 tu.farmer <- data.frame(Id = tu.farmer$Id.x, FDP_Farm__c = tu.farmer$Id.y)
+
 # Update farmer
+
 load.sf('update', 'fdp_farmer__c', tu.farmer, 1)
 batch.status(batches_info)
 batch.detail(batches_info)
@@ -556,31 +583,46 @@ close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 # Farm baseline
 
 # Add submission
+
 tl.farmbl$FDP_submission__c <- left_join(tl.farmbl, sf.sub, 
                                        by = c("FDP_submission_v1__c" = "Id_v1__c"))[["Id"]]
+
 # Add farm
+
 tl.farmbl$farm__c <- left_join(tl.farmbl, sf.farm,
                                by = c("farm_v1__c" = "Id_v1__c"))[["Id"]]
+
 # Load farm baseline
+
 load.sf('insert', 'fdp_Farm_BL__c', tl.farmbl, 1)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 
 
-### MODIFY BELOW TO GROUP EACH LOAD INTO FOLDER
-
-save(tl.submission, tl.farmer, tl.farm, tl.farmbl, file = 'data_loaded.RData')
-write.csv(tl.submission, 'submission_loaded.csv')
-write.csv(tl.farmer, 'farmer_loaded.csv')
-write.csv(tl.farm, 'farm_loaded.csv')
-write.csv(tl.farmbl, 'farmbaseline_loaded.csv')
-
 # 6. Save copy of data loaded ------------------------------------------------
 
-copy.name <- paste("../3_Previously_loaded/data_loaded_",
-                   substr(Sys.time(), 1, 10), ".csv",
-                   sep = "")
+
+# Create directory
+
+setwd("../3_Previously_loaded")
+dir.create(path = paste("v2_", load_date, sep = ""))
+
+# Save data before it was loaded to Salesforce
+
+dir.path <- paste("v2_", load_date, sep = "")
+save(tl.submission, tl.farmer, tl.farm, tl.farmbl, 
+     paste(dir.path, '/data_loaded.RData', sep = ""))
+write.csv(tl.submission, paste(dir.path, '/submission_loaded.csv', sep = ""))
+write.csv(tl.farmer, paste(dir.path,  '/farmer_loaded.csv', sep = ""))
+write.csv(tl.farm, paste(dir.path, '/farm_loaded.csv', sep = ""))
+write.csv(tl.farmbl, paste(dir.path, '/farmbaseline_loaded.csv', sep = ""))
+
+# Save data in Salesforce
+
+copy.name <- paste(dir.path, "/loaded_in_salesforce.csv", sep = "")
+
+#### RETRIEVE ONLY TODAY'S
 copy <- rforcecom.retrieve(session, "FDP_submission__c", q.coding$api.name)
 
 write.csv(copy, copy.name)
