@@ -86,7 +86,7 @@ View(to.load[to.load$farmer.code %in% dup.codes, ])
 # Salesforce login
 library(RForcecom)
 username <- "admin@utzmars.org"
-password <- "gfutzmars2019**dsxcAt9SEvg9ktmMBCH8lFOU"
+password <- readline("Enter password followed by session token: ")
 session <- rforcecom.login(username, password)
 
 # Retrieve existing farmer codes and check if exist in data to to.load
