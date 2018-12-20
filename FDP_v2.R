@@ -60,6 +60,7 @@ nb.assigned.to <- sum(!is.na(to.load$assigned.to))
 ifelse(nrow(to.load) == nb.assigned.to, "No blank assigned to's",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
+View(to.load[is.na(to.load$assigned.to), ]) # See blank observations
 
 
 # Farmer code: no blank observations
@@ -68,6 +69,7 @@ nb.farmer.code <- sum(!is.na(to.load$farmer.code))
 ifelse(nrow(to.load) == nb.farmer.code, "No blank farmer codes",
        warning("Encountered blank fields. Make sure there are no missing fields.",
                call. = FALSE))
+View(to.load[is.na(to.load$farmer.code), ]) # See blank observations
 
 
 # Farmer code: no repeated values in file
@@ -114,7 +116,7 @@ ifelse(length(fo.sf$Name) == length(unique(fo.sf$Name)),
        "No duplicated Users",
        warning("There are duplicated Users in Salesforce. Please check.",
                call. = FALSE))
-fo.sf[duplicated(fo.sf$Name), ] # Print duplicated field officer names
+View(fo.sf[duplicated(fo.sf$Name), ]) # Print duplicated field officer names
 
 
 # Assigned to: users in file should exist in Salesforce
@@ -146,8 +148,8 @@ for(i in 1:nrow(to.load)) {
 # Check that "Assigned to" in file exist as Salesforce Users
 fo.to.load <- unique(to.load$assigned.to) # list of FO in farmers to load
 ifelse(sum(!(fo.to.load %in% fo.sf$Name)) == 0,
-       "All field officers assigned exist in Salesforce",
-       warning("There are field officers that were not found in Salesforce",
+       "All Users assigned exist in Salesforce",
+       warning("There are Users that were not found in Salesforce",
                call. = FALSE))
 
 # If there are missing FOs in Salesforce, list them
@@ -172,7 +174,7 @@ names(to.load)[names(to.load) == "Id"] <- "assigned.to"
 na.village.ind <- is.na(to.load$village)
 ifelse(sum(na.village.ind) == 0, "No blank villages",
        warning("There are blank villages", call. = FALSE))
-# List missing villages
+# List blank villages
 missing.villages <- to.load[na.village.ind, c("farmer.name", "farmer.code")]
 
 
@@ -207,7 +209,9 @@ ifelse(sum(!(to.load$village %in% villages.sf$Name)) > 0,
 villages.notsf <- !(to.load$village %in% villages.sf$Name)
 View(data.frame(unique(to.load$village[villages.notsf])))
 # Append villages that will be created
-write.csv(unique(to.load[villages.notsf, c("assigned.to", "village")]),
+load_date = strtrim(Sys.Date(), 10)
+write.csv(data.frame(load_date,
+                     unique(to.load[villages.notsf, c("assigned.to", "village")])),
           "../3_previously_loaded/missing_villages.csv", append = TRUE)
 
 # Create missing villages
@@ -229,14 +233,14 @@ new.vill <- left_join(new.vill, sf.districts,
                       by=c("Contact.District__r.Name" = "Name"))
 
 # Create data load job
-new_vill <- data.frame(Name=new_vill$village, district__c=new_vill$Id)
+new.vill <- data.frame(Name=new.vill$village, district__c=new.vill$Id)
 job_info <- rforcecom.createBulkJob(session, 
                                     operation='insert', 
                                     object='fpd_village__c')
 # Load data
 batches_info <- rforcecom.createBulkBatch(session, 
                                           jobId=job_info$id, 
-                                          new_vill, 
+                                          new.vill, 
                                           multiBatch = TRUE, 
                                           batchSize = 50)
 # Batches status
@@ -249,7 +253,8 @@ batches_status <- lapply(batches_info,
 
 # Close job and export villages created as csv
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
-write.csv(new_vill$Name, "Villages_created.csv", append = TRUE)
+write.csv(data.frame(load_date, new.vill$Name), 
+          "../3_previously_loaded/Villages_created.csv", append = TRUE)
 
 
 # Phone number: remove all non-numbers
@@ -344,7 +349,7 @@ table(to.load$educational.level)
 educ.valid <- q.options$option[q.options$short.name == "educational.level"]
 educ.equiv <- values.equivs[values.equivs$question == "educational.level",]
 
-# Farmer educaional level
+# Farmer educational level
 table(to.load$educational.level %in% educ.valid) #false: non valid values
 educ.correct <- c()
 for(i in 1:nrow(to.load)) {
@@ -390,6 +395,12 @@ table(to.load$spouse)
 
 groups <- as.data.frame(table(to.load$farmer.group))
 groups[order(groups$Var1), ]
+# If there are mispelled groups, correct, one by one:
+replace <- "^marannu 2$" # Regular expression
+replace.with <- "Marannu 2"
+to.load$farmer.group <- gsub(pattern = replace,
+                             replacement = replace.with,
+                             to.load$farmer.group)
 
 
 # Farm certifications: correct values not included in FDP options
@@ -403,6 +414,7 @@ to.load$certifications <- ifelse(to.load$certifications %in% wrong.certification
 # Farm area in cocoa: check value ranges
 
 dist.farm.area <- as.data.frame(table(to.load$cocoa.cultivation.ha, useNA = 'always'))
+dist.farm.area
 to.load$cocoa.cultivation.ha <- ifelse(to.load$cocoa.cultivation.ha > 49,
                                        NA, to.load$cocoa.cultivation.ha)
 
@@ -424,7 +436,6 @@ v2_objects <- v2_objects[!is.na(v2_objects)]
 
 # Add unique id to records that will be loaded
 
-load_date = strtrim(Sys.Date(), 10)
 load.ids = c()
 for(i in 1:nrow(to.load)) {
      load.ids[i] = paste(load_date, "-", sprintf("%04d", i), sep = "")
@@ -443,9 +454,8 @@ names(to.load) <- q.coding$api.name
 tl.submission = data.frame(Id_v1__c = load.ids,
                            Surveyor__c = to.load$Assigned_to__c,
                            Respondent__c = na.rows,
-                           Respondent_v1__c = load.ids
-                           )
-
+                           Respondent_v1__c = load.ids,
+                           End__c = rep("2018-12-18T00:00:00.000Z", nrow(to.load)))
 # Farmer
 tl.farmer = data.frame(Id_v1__c = load.ids,
                        FDP_submission__c = na.rows,
@@ -492,10 +502,19 @@ tl.farmbl = data.frame(Id_v1__c = load.ids,
 
 source("../FDP-farmers-dataload/load_sf.R")
 
+# Enter date filter. This date should correspond to the current Salesforce date 
+#   and will be used to retrieve the data loaded in the next steps, both for adding
+#   references and for keeping a backup of the data loaded.
+
+start.date <- "2018-12-17T00:00:00Z"
+end.date <- "2018-12-19T00:00:00Z"
+date.condition <- paste("WHERE CreatedDate >= ", start.date,
+                        " AND CreatedDate <= ", end.date,
+                        " AND Id_v1__c != null", sep = "")
 
 # Submissions 1 (respondent blank)
 
-load.sf('insert', 'fpd_Submission__c', tl.submission, 1)
+load.sf('insert', 'fpd_Submission__c', tl.submission, 20)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
@@ -509,9 +528,9 @@ sf.vill <- rforcecom.retrieve(session, "fpd_village__c", c("Id", "Name"))
 sf.vill <- sf.vill[!duplicated(sf.vill$Name), ]
 tl.farmer$village__c <- left_join(tl.farmer, sf.vill, by = c("village__c" = "Name"))[["Id"]]
 
-# Add submission Id
+# Add submission Id (update query to correct created date)
 
-sub.sql <- "SELECT Id, Id_v1__c FROM fpd_Submission__c WHERE CreatedDate >= 2018-09-07T00:00:00Z AND CreatedDate < 2018-09-09T00:00:00Z"
+sub.sql <- paste("SELECT Id, Id_v1__c FROM fpd_Submission__c", date.condition)
 sf.sub <- rforcecom.query(session, sub.sql) # retrieve submissions from SF
 tl.farmer$FDP_submission__c <- left_join(tl.farmer, sf.sub, 
                                          by = c("FDP_submission_v1__c" = "Id_v1__c"))[["Id"]]
@@ -522,7 +541,7 @@ tl.farmer <- subset(tl.farmer, select = -gps__c)
 
 # Load farmers
 
-load.sf('insert', 'fdp_farmer__c', tl.farmer, 1)
+load.sf('insert', 'fdp_farmer__c', tl.farmer, 15)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
@@ -530,16 +549,16 @@ close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 
 # Submission 2 (fill respondent)
 
-# Add farmers
+# Add farmers (update query to correct created date)
 
-farmer.sql <- "SELECT Id, Id_v1__c FROM fdp_farmer__c WHERE CreatedDate >= 2018-09-07T00:00:00Z AND CreatedDate < 2018-09-09T00:00:00Z"
+farmer.sql <- paste("SELECT Id, Id_v1__c FROM fdp_farmer__c", date.condition)
 sf.farmer <- rforcecom.query(session, farmer.sql)
 tu.submission <- left_join(sf.sub, sf.farmer, by = "Id_v1__c")
 tu.submission <- data.frame(Id = tu.submission$Id.x, Respondent__c = tu.submission$Id.y)
 
 # Update farmers
 
-load.sf('update', 'fpd_Submission__c', tu.submission, 1)
+load.sf('update', 'fpd_Submission__c', tu.submission, 15)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
@@ -557,7 +576,7 @@ tl.farm$farmer__c <- left_join(tl.farm, sf.farmer,
                                by = c("farmer_v1__c" = "Id_v1__c"))[["Id"]]
 # Load farms
 
-load.sf('insert', 'fdp_Farm__c', tl.farm, 1)
+load.sf('insert', 'fdp_Farm__c', tl.farm, 15)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
@@ -565,16 +584,16 @@ close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
 
 # Farmer 2 (fill farm)
 
-# Add farm
+# Add farm (update query to correct created date)
 
-farm.sql <- "SELECT Id, Id_v1__c FROM fdp_Farm__c WHERE CreatedDate >= 2018-09-07T00:00:00Z AND CreatedDate < 2018-09-09T00:00:00Z"
+farm.sql <- paste("SELECT Id, Id_v1__c FROM fdp_Farm__c", date.condition)
 sf.farm <- rforcecom.query(session, farm.sql)
 tu.farmer <- left_join(sf.farmer, sf.farm, by = "Id_v1__c")
 tu.farmer <- data.frame(Id = tu.farmer$Id.x, FDP_Farm__c = tu.farmer$Id.y)
 
 # Update farmer
 
-load.sf('update', 'fdp_farmer__c', tu.farmer, 1)
+load.sf('update', 'fdp_farmer__c', tu.farmer, 15)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
@@ -594,7 +613,7 @@ tl.farmbl$farm__c <- left_join(tl.farmbl, sf.farm,
 
 # Load farm baseline
 
-load.sf('insert', 'fdp_Farm_BL__c', tl.farmbl, 1)
+load.sf('insert', 'fdp_Farm_BL__c', tl.farmbl, 15)
 batch.status(batches_info)
 batch.detail(batches_info)
 close_job_info <- rforcecom.closeBulkJob(session, jobId=job_info$id)
@@ -621,36 +640,28 @@ write.csv(tl.farmbl, paste(dir.path, '/loaded_farmbaseline.csv', sep = ""))
 # Save data from Salesforce
 
 # Submissions
-sf.submission.query <- 
-     paste("SELECT ", paste(names(tl.submission), collapse = ", "),
-           " FROM fpd_Submission__c WHERE createdDate = TODAY AND Id_v1__c != null",
-           sep = "")
+sf.submission.query <- paste("SELECT ", paste(names(tl.submission), collapse = ", "),
+                             " FROM fpd_Submission__c ", date.condition, sep = "")
 write.csv(rforcecom.query(session, sf.submission.query),
           file = paste(dir.path, "/salesforce_submissions.csv", sep = ""))
 
 # Farmers
-sf.farmer.query <- 
-     paste("SELECT ", paste(names(tl.farmer), collapse = ", "),
-           " FROM fdp_farmer__c WHERE createdDate = TODAY AND Id_v1__c != null",
-           sep = "")
+sf.farmer.query <- paste("SELECT ", paste(names(tl.farmer), collapse = ", "),
+                         " FROM fdp_farmer__c ", date.condition, sep = "")
 write.csv(rforcecom.query(session, sf.farmer.query),
           file = paste(dir.path, "/salesforce_farmers.csv", sep = ""))
 
 # Farms
-sf.farm.query <- 
-     paste("SELECT ", paste(names(tl.farm), collapse = ", "),
-           " FROM fdp_Farm__c WHERE createdDate = TODAY AND Id_v1__c != null",
-           sep = "")
+sf.farm.query <- paste("SELECT ", paste(names(tl.farm), collapse = ", "),
+                       " FROM fdp_Farm__c ", date.condition, sep = "")
 write.csv(rforcecom.query(session, sf.farm.query),
           file = paste(dir.path, "/salesforce_farms.csv", sep = ""))
 
 # Farm baselines
-sf.farmbl.query <- 
-     paste("SELECT ", paste(names(tl.farmbl), collapse = ", "),
-           " FROM fdp_Farm_BL__c WHERE createdDate = TODAY AND Id_v1__c != null",
-           sep = "")
+sf.farmbl.query <- paste("SELECT ", paste(names(tl.farmbl), collapse = ", "),
+                         " FROM fdp_Farm_BL__c ", date.condition, sep = "")
 write.csv(rforcecom.query(session, sf.farmbl.query),
-          file = paste(dir.path, "/salesforce_submission.csv", sep = ""))
+          file = paste(dir.path, "/salesforce_farmbl.csv", sep = ""))
 
 
 # Move file from "To be loaded" to "Previously loaded" folder
