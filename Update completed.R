@@ -1,8 +1,8 @@
 # Salesforce login ------------------------------------------------------------------
 
 library(RForcecom)
-username <- "admin@utzmars.org"
-password <- "gfutzmars2018*hn5OC4tzSecOhgHKnUtZL05C"
+username <- readline(prompt = "Enter username: ")
+password <- readline(prompt = "Enter password: ")
 session <- rforcecom.login(username, password)
 
 
